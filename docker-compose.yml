@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ecommerce-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ecommercedb
+      POSTGRES_USER: ecommerce_user
+      POSTGRES_PASSWORD: ecommerce_pass
+    ports:
+      - "5436:5432"
+    volumes:
+      - ecommerce_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecommerce_user -d ecommercedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecommerce-app
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ecommercedb
+      DB_USER: ecommerce_user
+      DB_PASSWORD: ecommerce_pass
+      # Pluggable payment gateway -- defaults to the mock gateway so this compose
+      # stack runs fully self-contained with no external Stripe account/credentials.
+      # Set PAYMENT_GATEWAY=stripe and STRIPE_API_KEY=sk_test_... to switch to real
+      # Stripe test-mode charges (see README).
+      PAYMENT_GATEWAY: mock
+      STRIPE_API_KEY: ""
+      # Override with a freshly generated secret for anything beyond local demo use.
+      APP_JWT_SECRET: zOl5YhE6jj0THM2FoARQNIPxM9QC7dgmEWkX7XmiCjobnOArItkZX9leKAYDRykm-CHANGE-ME-IN-PRODUCTION
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  ecommerce_pg_data:
+    driver: local
