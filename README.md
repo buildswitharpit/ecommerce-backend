@@ -1,549 +1,272 @@
-# E-commerce Backend
+# Ecommerce Backend + Frontend
 
-A production-quality REST API for a small e-commerce backend, built with Spring Boot 3.
-This is Project 6 in a series of portfolio projects (see `../CONTEXT.md`) — the first
-"advanced" one, and the first to need real authentication (Spring Security + JWT) and a
-third-party payment integration (Stripe, behind a pluggable abstraction).
+A full-stack e-commerce demo: a production-quality Spring Boot REST API (JWT auth,
+product catalog, cart, checkout with inventory management and a pluggable mock/Stripe
+payment gateway) paired with a new React 19 + TypeScript frontend that provides a
+complete UI for every endpoint the backend exposes.
 
-## What it does
+## Project overview
 
-- **JWT authentication** — register (always as `CUSTOMER`; there is no way to
-  self-assign `ADMIN` through the public API), login (issues a short-lived access token
-  + a long-lived, database-backed refresh token), refresh (rotates the refresh token —
-  each one is single-use), and logout (revokes a specific refresh token). This gives
-  real logout/revocation semantics instead of stateless-forever tokens: a revoked
-  refresh token can never mint a new access token again, even though the access tokens
-  it already produced remain valid until their own short expiry.
-- **Product catalog** — admin-managed CRUD, public browsing/search (paginated, filter
-  by `category`/`search`). Deleting a product is a **soft delete**
-  (`active=false`) — past `OrderItem` rows reference a product for traceability and
-  must never break. Stock uses JPA **optimistic locking** (`@Version`): a concurrent
-  checkout/restock racing on the same product fails fast with a 409 asking the caller
-  to retry, instead of silently corrupting stock.
-- **Cart** — one per user, created lazily on first access. Add/update/remove line
-  items, clear the whole cart. Always scoped to the caller's own JWT identity.
-- **Checkout** — the core business logic (see the "Checkout flow" diagram below):
-  validates every cart line (product still active, sufficient stock), creates the
-  order, charges the active `PaymentGateway`, and only *after* a successful charge
-  decrements stock (writing one `InventoryTransaction` audit row per product), marks
-  the order `PAID`, and clears the cart. On a decline the order is marked
-  `PAYMENT_FAILED`, stock is left completely untouched, and the cart survives so the
-  customer can retry with a different payment method.
-- **Order lifecycle / admin management** — admins transition orders through
-  `PAID -> SHIPPED -> DELIVERED`, or cancel a `PAID`/`SHIPPED` order (which **restocks**
-  every line item and writes an `ORDER_CANCELLED` audit row per product). Cancelling a
-  `DELIVERED` order is rejected with 409 — see "Known limitations" below.
-- **Inventory audit trail** — every stock change (checkout, cancellation restock, or a
-  manual admin adjustment via `PATCH /api/products/{id}/stock`) writes an immutable
-  `InventoryTransaction` row, so stock history is always reconstructable from the audit
-  log, not just trusted from the current `stockQuantity` number.
+This started as a standalone Spring Boot backend (see `backend/README.md` for the full
+write-up of its design, auth model, and business logic) and was restructured into a
+monorepo containing:
 
-Request validation (`jakarta.validation`) on all write endpoints, with a consistent
-structured JSON error body for every failure case (validation, not-found, conflicts —
-insufficient stock, optimistic-lock retry, duplicate email/sku, invalid status
-transition — auth failures, forbidden role, malformed JSON, and a generic 500 fallback
-— no stack traces or password hashes ever leak to the client).
+- **`backend/`** — the original Spring Boot API, unchanged in behavior, just relocated.
+- **`frontend/`** — a brand-new React 19 SPA that consumes the backend's REST API:
+  auth (register/login/refresh/logout), product browsing + admin catalog management,
+  cart, checkout, order history, and admin order management.
+- **`dummy-data/`** — realistic, reusable JSON fixtures for every entity, plus a seed
+  script that populates a running backend through its public API.
+- **`docker-compose.yml`** — builds and runs the whole stack (Postgres + backend +
+  frontend) with one command.
 
-Full OpenAPI/Swagger documentation for every endpoint, with an actually-usable "Authorize"
-button in Swagger UI. Runs against H2 (in-memory, no setup) locally, or PostgreSQL via
-Docker Compose.
+Every existing backend API is untouched — the frontend was built to consume it as-is,
+and the restructuring only moved files and updated build/Docker paths.
 
-## Auth model
+### Folder structure
 
-Stateless JWT (HS256, signed via `io.jsonwebtoken`/jjwt), no server-side sessions:
+```
+.
+├── backend/              Spring Boot 3 API (Java 21) -- see backend/README.md
+│   ├── src/
+│   ├── pom.xml
+│   └── Dockerfile
+├── frontend/              React 19 + TypeScript + Vite SPA
+│   ├── src/
+│   │   ├── api/           axios client + one module per resource (auth/products/cart/orders)
+│   │   ├── components/    shared UI (shadcn primitives in ui/, plus app components)
+│   │   ├── context/        AuthContext (token storage, decoded-JWT user info)
+│   │   ├── hooks/           TanStack Query hooks per resource
+│   │   ├── layouts/         RootLayout (header/nav/footer)
+│   │   ├── pages/            one folder per feature area (auth/products/cart/checkout/orders/admin)
+│   │   ├── routes/           ProtectedRoute / AdminRoute guards
+│   │   ├── types/             TypeScript mirrors of every backend DTO
+│   │   └── utils/             formatting, JWT decoding, error extraction
+│   ├── package.json
+│   └── Dockerfile
+├── dummy-data/            seed fixtures + seed.js (see dummy-data/README.md)
+├── docker-compose.yml      db + backend + frontend, one `docker compose up --build`
+└── README.md               this file
+```
 
-- **Access token** — short-lived (15 min by default, `app.jwt.access-token-expiration-ms`),
-  carries the user's id/email/role as claims, sent as `Authorization: Bearer <token>` on
-  every protected request. Validated on each request by a `JwtAuthenticationFilter`
-  (`OncePerRequestFilter`) that populates the Spring Security context — it never hits
-  the database, so validation is fast and stateless.
-- **Refresh token** — long-lived (7 days by default, `app.jwt.refresh-token-expiration-ms`),
-  an opaque random value (*not* a JWT) persisted server-side as a `RefreshToken` row
-  storing only a SHA-256 hash of it (mirroring how `User.passwordHash` never stores a
-  plaintext password). This is what makes real revocation possible: a JWT can't be
-  "un-signed" before its own expiry, but a database row can be flagged `revoked` at any
-  time. Every refresh rotates the token (the old one is revoked, a new one issued), so a
-  stolen-and-replayed old refresh token stops working the instant the legitimate client
-  refreshes.
-- **Route rules** (`SecurityConfig`): `/api/auth/register|login|refresh`,
-  `GET /api/products/**`, Swagger UI/OpenAPI docs, and `/actuator/health` are public;
-  `POST /api/auth/logout`, `/api/cart/**`, and `/api/orders/**` require any authenticated
-  user; product writes/stock adjustment, `/api/admin/**`, and
-  `PATCH /api/orders/{id}/status` require the `ADMIN` role. A missing/invalid token on a
-  protected route returns 401; an authenticated-but-wrong-role caller gets 403 — both
-  via the same structured `ErrorResponse` body used everywhere else in the API.
+### Architecture overview
 
-**The committed JWT secret is a placeholder for local/demo use only.** Override it with
-a freshly generated secret (env var `APP_JWT_SECRET`) for any real deployment — see
-`application.yml` for the exact default value and where it's used.
+```
+Browser
+  │
+  ▼
+frontend (nginx, :80 in Docker / Vite dev server, :5173 locally)
+  │  reverse-proxies /api/** to the backend -- the browser only ever talks to one
+  │  origin, so no CORS configuration was needed on the Spring Boot side
+  ▼
+backend (Spring Boot, :8080)
+  │  stateless JWT auth, REST API, business logic
+  ▼
+PostgreSQL (Docker) / H2 in-memory (local dev)
+```
 
-## Payment gateway design — pluggable, mock by default
+The frontend never calls the backend's origin directly — in dev, Vite's dev-server proxy
+forwards `/api/*` to `http://localhost:8080`; in Docker, nginx does the same, proxying to
+the `backend` service by its Compose network hostname. This means the backend's
+`SecurityConfig` required zero changes to support a separate frontend.
 
-Checkout charges through a `PaymentGateway` interface with two implementations, wired
-by Spring `@ConditionalOnProperty`. Both are shown here because the mock/real split is
-the point of the design, not something to hide:
+### Technology stack
 
-| | `MockPaymentGateway` (default) | `StripePaymentGateway` |
+**Backend:** Java 21, Spring Boot 3.5, Spring Security (JWT via `jjwt`), Spring Data JPA,
+Bean Validation, springdoc-openapi (Swagger UI), H2 / PostgreSQL 16, JUnit 5 + Mockito.
+Full details in `backend/README.md`.
+
+**Frontend:** React 19, TypeScript (strict mode), Vite 8, Tailwind CSS v4, shadcn/ui
+(Radix primitives), React Router 7, TanStack Query 5, Axios, React Hook Form + Zod,
+Lucide icons, Sonner (toasts).
+
+## Installation
+
+### Prerequisites
+
+- Java 21+ and Maven (for running the backend outside Docker)
+- Node.js 22+ and npm (for running the frontend outside Docker)
+- Docker + Docker Compose (for running the full stack in containers)
+
+### Clone and install dependencies
+
+```bash
+git clone <this-repo-url>
+cd ecommerce-backend
+
+# Backend: dependencies are resolved by Maven on first build/run, nothing to install upfront
+# Frontend:
+cd frontend && npm install && cd ..
+```
+
+### Environment variables
+
+Nothing is required to run locally — every default is dev-safe (H2 in-memory, mock
+payment gateway, a committed-but-clearly-labeled JWT secret). For anything beyond local
+demo use, override these (see `backend/README.md` for the full list and rationale):
+
+| Variable | Where | Purpose |
 |---|---|---|
-| Activated by | `payment.gateway=mock` or unset (`matchIfMissing = true`) | `payment.gateway=stripe` |
-| External dependency | None | Real Stripe test-mode API call (`com.stripe:stripe-java`) |
-| Behavior | Any `paymentMethodToken` succeeds and returns a fake reference id (`"mock_" + UUID`), **except** the literal string `tok_chargeDeclined`, which simulates a decline | Creates a real Stripe `Charge` via the classic Charges API, passing `paymentMethodToken` through as the Stripe `source` token |
-| Used in this project's own Docker/verification run | **Yes — exclusively** | No (no Stripe account/credentials available in that environment) |
+| `APP_JWT_SECRET` | backend | HS256 signing secret for access tokens |
+| `PAYMENT_GATEWAY` | backend | `mock` (default) or `stripe` |
+| `STRIPE_API_KEY` | backend | only read when `PAYMENT_GATEWAY=stripe` |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | backend | Postgres connection (docker profile only) |
+| `VITE_BACKEND_URL` | frontend (dev only) | where the Vite dev-server proxy forwards `/api` (default `http://localhost:8080`) |
 
-`tok_chargeDeclined` deliberately mirrors Stripe's own test-mode magic decline tokens
-(Stripe ships `tok_chargeDeclined`, `4000000000000002`, etc. for exercising decline
-paths in test mode) — the abstraction reads naturally and the exact same
-`paymentMethodToken` value exercises the decline path identically against either
-gateway.
+## Running the Backend
 
-`StripePaymentGateway` is written completely and correctly — a real Stripe integration,
-not a stub — but is not exercised live in this project's verification, since doing so
-would require a real Stripe test-mode account. It compiles, is wired correctly, and is
-simply never the active bean unless explicitly configured. **To switch to live Stripe
-test-mode charges:**
+From `backend/`:
 
 ```bash
-PAYMENT_GATEWAY=stripe
-STRIPE_API_KEY=sk_test_...   # a real Stripe secret test key
-```
-
-Both `OrderServiceImpl` and the checkout flow are completely unaware of which gateway is
-active — they depend only on the `PaymentGateway` interface.
-
-## Known limitations
-
-- **Checkout charges before decrementing stock** (matching the spec for this project):
-  if a rare optimistic-lock stock conflict occurs *after* a successful charge, the
-  whole checkout transaction (including the order and payment rows) rolls back. This is
-  safe with the mock gateway (no real money moves), but a production integration with a
-  real gateway would need a compensating refund in that branch — out of scope here.
-- **No returns/refund flow.** Cancelling a `DELIVERED` order is rejected with 409 by
-  design; once an order is delivered, this API has no mechanism to reverse it.
-- **Logout revokes one specific refresh token**, not every session for the account —
-  the caller must pass the exact refresh token to revoke in the request body. This
-  models per-device/per-session logout rather than a global "sign out everywhere."
-
-## Tech stack
-
-- Java 21, Spring Boot 3.5.16
-- Spring Web, Spring Data JPA, Spring Security, Bean Validation
-- `io.jsonwebtoken` (jjwt) 0.12.6 for JWT signing/validation (HS256)
-- `com.stripe:stripe-java` for the real (non-default) Stripe integration
-- H2 (default/local profile) / PostgreSQL 16 (`docker` profile)
-- springdoc-openapi 2.8.17 (Swagger UI / OpenAPI 3), with a Bearer `SecurityScheme` so
-  Swagger UI's "Authorize" button actually works
-- JUnit 5 + Mockito (service-layer unit tests), Spring Boot Test + MockMvc (full-stack
-  integration tests using real JWTs obtained from the actual login endpoint)
-- Docker multi-stage build + Docker Compose (app + Postgres, healthcheck-gated startup)
-
-No Lombok: getters/setters/constructors/builders are hand-written, following the same
-approach as every sibling project in this series (see their READMEs for the
-annotation-processor incompatibility that motivated this, which reproduces identically
-on this project's toolchain).
-
-## Project structure
-
-```
-ecommerce-backend/
-├── Dockerfile                     multi-stage build (Maven -> JRE runtime)
-├── docker-compose.yml             app + postgres, healthcheck-gated startup
-├── LICENSE                        MIT
-├── pom.xml
-├── src/main/java/com/ecommerce/
-│   ├── EcommerceBackendApplication.java
-│   ├── config/
-│   │   ├── OpenApiConfig.java                  Swagger/OpenAPI metadata + bearerAuth scheme
-│   │   └── SecurityConfig.java                 route rules, PasswordEncoder, filter chain
-│   ├── security/
-│   │   ├── JwtService.java                     sign/validate access tokens (jjwt, HS256)
-│   │   ├── JwtAuthenticationFilter.java         OncePerRequestFilter: Bearer -> SecurityContext
-│   │   ├── UserPrincipal.java                   authenticated-caller record (id/email/role)
-│   │   ├── TokenHasher.java                     opaque refresh-token generation + SHA-256 hashing
-│   │   ├── RestAuthenticationEntryPoint.java     401 JSON body (missing/invalid token)
-│   │   └── RestAccessDeniedHandler.java          403 JSON body (wrong role)
-│   ├── controller/
-│   │   ├── AuthController.java                  /api/auth (register/login/refresh/logout)
-│   │   ├── ProductController.java                /api/products
-│   │   ├── CartController.java                   /api/cart
-│   │   ├── OrderController.java                  /api/orders (checkout, list, get, status)
-│   │   └── AdminOrderController.java             /api/admin/orders (cross-customer listing)
-│   ├── service/ + service/impl/                 business logic interfaces + implementations
-│   │                                             (OrderServiceImpl.checkout() is the core
-│   │                                              business logic of this project)
-│   ├── payment/
-│   │   ├── PaymentGateway.java                  the abstraction OrderServiceImpl depends on
-│   │   ├── PaymentResult.java                   success/failure + gateway reference id
-│   │   ├── MockPaymentGateway.java               default: no external dependency
-│   │   └── StripePaymentGateway.java             real Stripe integration (opt-in)
-│   ├── repository/
-│   │   ├── UserRepository / RefreshTokenRepository / ProductRepository / CartRepository /
-│   │   │   CartItemRepository / OrderRepository / PaymentRepository / InventoryTransactionRepository
-│   │   └── spec/ProductSpecifications.java      composable filters (category/search/active)
-│   ├── entity/                                  JPA entities (never exposed over the wire)
-│   │   ├── User / Role / RefreshToken
-│   │   ├── Product (optimistic-locked via @Version)
-│   │   ├── Cart / CartItem
-│   │   ├── Order / OrderItem / OrderStatus
-│   │   ├── Payment / PaymentStatus
-│   │   └── InventoryTransaction / InventoryReason
-│   ├── dto/request/                             validated request DTOs
-│   ├── dto/response/                             response DTOs (incl. ErrorResponse) — never
-│   │                                             include passwordHash
-│   ├── mapper/                                  explicit entity <-> DTO mapping
-│   └── exception/                               NotFoundException/ConflictException/
-│                                                 UnauthorizedException hierarchy +
-│                                                 @RestControllerAdvice
-├── src/main/resources/
-│   ├── application.yml                          default profile: H2 in-memory, mock gateway
-│   └── application-docker.yml                   docker profile: PostgreSQL, env-driven overrides
-└── src/test/
-    ├── java/.../service/*Test.java               Mockito unit tests: auth, product CRUD +
-    │                                              soft delete, cart, and the checkout flow
-    │                                              (success, insufficient stock, decline,
-    │                                              optimistic-lock conflict) + cancel-with-restock
-    └── java/.../controller/*IntegrationTest.java  MockMvc + real H2, real JWTs from the actual
-                                                   login endpoint: role enforcement (401/403/
-                                                   allowed), the full register->login->create
-                                                   -product(ADMIN)->add-to-cart->checkout->
-                                                   verify-stock happy path, and the decline path
-```
-
-## Code flow diagrams
-
-### 1. Register -> login -> JWT-validated request
-
-```mermaid
-sequenceDiagram
-    participant Main as EcommerceBackendApplication.main()
-    participant Spring as Spring Boot (ApplicationContext)
-    participant DS as DispatcherServlet
-    participant Filter as JwtAuthenticationFilter
-    participant AuthCtrl as AuthController
-    participant AuthSvc as AuthServiceImpl
-    participant JwtSvc as JwtService
-    participant UserRepo as UserRepository
-    participant RTRepo as RefreshTokenRepository
-    participant CartCtrl as CartController
-    participant DB as Database (H2 / PostgreSQL)
-
-    Main->>Spring: SpringApplication.run(...)
-    Spring->>Spring: component scan com.ecommerce.*<br/>build SecurityFilterChain (SecurityConfig),<br/>register JwtAuthenticationFilter before UsernamePasswordAuthenticationFilter
-    Spring-->>Main: application context ready, embedded Tomcat listening on :8080
-
-    rect rgb(235, 245, 255)
-    note over AuthCtrl,DB: POST /api/auth/register (public)
-    DS->>AuthCtrl: register(RegisterRequest)
-    AuthCtrl->>AuthSvc: register(request)
-    AuthSvc->>UserRepo: existsByEmail(email)
-    UserRepo->>DB: SELECT ...
-    alt email already registered
-        DB-->>AuthSvc: true
-        AuthSvc-->>AuthCtrl: throws DuplicateEmailException
-        AuthCtrl-->>DS: GlobalExceptionHandler -> 409 + ErrorResponse
-    else email free
-        AuthSvc->>AuthSvc: passwordEncoder.encode(password)<br/>role hardcoded to CUSTOMER (never from request)
-        AuthSvc->>UserRepo: save(user)
-        UserRepo->>DB: INSERT INTO users ...
-        AuthSvc-->>AuthCtrl: UserResponse (no passwordHash)
-        AuthCtrl-->>DS: 201 Created
-    end
-    end
-
-    rect rgb(235, 250, 235)
-    note over AuthCtrl,DB: POST /api/auth/login (public)
-    DS->>AuthCtrl: login(LoginRequest)
-    AuthCtrl->>AuthSvc: login(request)
-    AuthSvc->>UserRepo: findByEmail(email)
-    UserRepo->>DB: SELECT ...
-    alt user not found OR passwordEncoder.matches() fails
-        AuthSvc-->>AuthCtrl: throws UnauthorizedException
-        AuthCtrl-->>DS: GlobalExceptionHandler -> 401 + ErrorResponse
-    else credentials valid
-        AuthSvc->>JwtSvc: generateAccessToken(user)
-        JwtSvc-->>AuthSvc: signed JWT (HS256, 15 min expiry)
-        AuthSvc->>AuthSvc: TokenHasher.newOpaqueToken() + sha256(...)
-        AuthSvc->>RTRepo: save(RefreshToken{tokenHash, expiresAt, revoked=false})
-        RTRepo->>DB: INSERT INTO refresh_tokens ...
-        AuthSvc-->>AuthCtrl: AuthResponse(accessToken, refreshToken, "Bearer", expiresIn)
-        AuthCtrl-->>DS: 200 OK
-    end
-    end
-
-    rect rgb(255, 245, 235)
-    note over Filter,CartCtrl: GET /api/cart, header "Authorization: Bearer <accessToken>"
-    DS->>Filter: doFilterInternal(request)
-    Filter->>JwtSvc: parseAndValidate(token)
-    alt token missing / invalid / expired
-        JwtSvc-->>Filter: null
-        Filter->>DS: continue filter chain (SecurityContext stays empty)
-        DS-->>DS: route is protected -> Spring Security rejects
-        DS-->>CartCtrl: (never reached)
-        note right of DS: RestAuthenticationEntryPoint -> 401 + ErrorResponse
-    else token valid
-        JwtSvc-->>Filter: UserPrincipal(id, email, role)
-        Filter->>Filter: SecurityContextHolder.setAuthentication(<br/>UserPrincipal, authorities=[ROLE_&lt;role&gt;])
-        Filter->>DS: continue filter chain
-        DS->>CartCtrl: getCart(@AuthenticationPrincipal UserPrincipal)
-        CartCtrl-->>DS: 200 OK + CartResponse (scoped to principal.id())
-    end
-    end
-```
-
-### 2. Checkout flow
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant OrderCtrl as OrderController
-    participant OrderSvc as OrderServiceImpl
-    participant CartSvc as CartServiceImpl
-    participant ProdRepo as ProductRepository
-    participant OrderRepo as OrderRepository
-    participant Gateway as PaymentGateway<br/>(MockPaymentGateway by default)
-    participant PayRepo as PaymentRepository
-    participant InvRepo as InventoryTransactionRepository
-    participant DB as Database
-
-    Client->>OrderCtrl: POST /api/orders/checkout<br/>{paymentMethodToken}
-    OrderCtrl->>OrderSvc: checkout(userId, request)
-    OrderSvc->>CartSvc: getOrCreateCartEntity(userId)
-    CartSvc-->>OrderSvc: Cart (with items + Product refs)
-
-    alt cart is empty
-        OrderSvc-->>OrderCtrl: throws ConflictException
-        OrderCtrl-->>Client: 409 + ErrorResponse
-    else cart has items
-        loop each cart item
-            OrderSvc->>OrderSvc: check product.active && stockQuantity >= quantity
-        end
-        alt any item fails validation
-            OrderSvc-->>OrderCtrl: throws InsufficientStockException / ConflictException
-            OrderCtrl-->>Client: 409 + ErrorResponse (nothing charged or created)
-        else every item valid
-            OrderSvc->>OrderSvc: compute totalAmount, build Order (PENDING) + OrderItem snapshots
-            OrderSvc->>OrderRepo: save(order)
-            OrderRepo->>DB: INSERT INTO orders / order_items ...
-
-            OrderSvc->>Gateway: charge(totalAmount, paymentMethodToken)
-
-            alt paymentMethodToken == "tok_chargeDeclined" (mock) / real decline (Stripe)
-                Gateway-->>OrderSvc: PaymentResult.failure(...)
-                OrderSvc->>OrderSvc: order.status = PAYMENT_FAILED
-                note right of OrderSvc: stock NOT touched, cart left intact
-                OrderSvc->>OrderRepo: save(order)
-                OrderSvc->>PayRepo: save(Payment{status=FAILED})
-                OrderRepo->>DB: UPDATE orders ...
-                PayRepo->>DB: INSERT INTO payments ...
-                OrderSvc-->>OrderCtrl: OrderResponse (status=PAYMENT_FAILED)
-                OrderCtrl-->>Client: 200 OK
-            else charge succeeds
-                Gateway-->>OrderSvc: PaymentResult.success(gatewayReferenceId)
-                loop each order item
-                    OrderSvc->>ProdRepo: product.stockQuantity -= quantity;<br/>saveAndFlush(product)
-                    alt concurrent update raced (stale @Version)
-                        ProdRepo-->>OrderSvc: throws OptimisticLockingFailureException
-                        OrderSvc-->>OrderCtrl: throws ConflictException<br/>(whole transaction rolls back)
-                        OrderCtrl-->>Client: 409 + ErrorResponse ("please retry")
-                    else stock decrement succeeds
-                        ProdRepo->>DB: UPDATE products SET stock_quantity = ?, version = version + 1
-                        OrderSvc->>InvRepo: save(InventoryTransaction{ORDER_PLACED, -quantity})
-                        InvRepo->>DB: INSERT INTO inventory_transactions ...
-                    end
-                end
-                OrderSvc->>OrderSvc: order.status = PAID
-                OrderSvc->>CartSvc: clearCartEntity(cart)
-                CartSvc->>DB: DELETE FROM cart_items WHERE cart_id = ?
-                OrderSvc->>OrderRepo: save(order)
-                OrderSvc->>PayRepo: save(Payment{status=SUCCEEDED})
-                OrderRepo->>DB: UPDATE orders ...
-                PayRepo->>DB: INSERT INTO payments ...
-                OrderSvc-->>OrderCtrl: OrderResponse (status=PAID)
-                OrderCtrl-->>Client: 200 OK
-            end
-        end
-    end
-```
-
-## Running locally (no Docker, H2 in-memory)
-
-From inside `ecommerce-backend/`:
-
-```bash
+# Development (H2 in-memory, auto-reset on restart)
 mvn spring-boot:run
+
+# Production-style (build a jar, run it)
+mvn clean package
+java -jar target/ecommerce-backend.jar
 ```
 
-The app starts on `http://localhost:8080` with an in-memory H2 database (data is wiped
-on restart) and the mock payment gateway. The H2 console is available at
-`http://localhost:8080/h2-console` (JDBC URL: `jdbc:h2:mem:ecommercedb`, user `sa`,
-empty password).
+Runs on `http://localhost:8080`. Full details, auth model, and business-logic
+walkthrough: [`backend/README.md`](backend/README.md).
 
-## Running via Docker Compose (PostgreSQL)
+## Running the Frontend
 
-From inside `ecommerce-backend/`:
+From `frontend/`:
 
 ```bash
-docker compose up --build -d
+# Development (hot reload, proxies /api to http://localhost:8080)
+npm run dev
+
+# Production build
+npm run build      # outputs to frontend/dist/
+npm run preview    # serve the production build locally for a sanity check
 ```
 
-This builds the app image and starts two containers: `ecommerce-db` (Postgres 16) and
-`ecommerce-app`, which waits for the database to report healthy before starting. The
-mock payment gateway is used by default (`PAYMENT_GATEWAY=mock` in `docker-compose.yml`)
-— no Stripe account or credentials are required to run the full stack. The API is then
-available at `http://localhost:8080`.
+Dev server runs on `http://localhost:5173`. The dev server only proxies API calls — you
+still need the backend running separately (see above) for the frontend to have anything
+to talk to.
+
+## Docker
+
+From the repo root:
 
 ```bash
-docker compose logs -f app     # tail app logs
-docker compose down            # stop and remove containers (add -v to also drop volumes)
+docker compose up --build         # build images and start db + backend + frontend
+docker compose up --build -d      # same, detached
+docker compose logs -f backend    # tail backend logs (or `frontend`, `db`)
+docker compose down               # stop and remove containers (add -v to also drop the Postgres volume)
 ```
 
-To switch the `app` service to real Stripe test-mode charges, set `PAYMENT_GATEWAY=stripe`
-and `STRIPE_API_KEY=sk_test_...` in `docker-compose.yml` (or override at `docker compose
-up` time) before starting the stack.
+Once healthy:
 
-## Swagger / OpenAPI
+- Frontend: `http://localhost:5173`
+- Backend API directly: `http://localhost:8080`
+- Swagger UI: `http://localhost:8080/swagger-ui.html` (also reachable through the
+  frontend's nginx proxy at `http://localhost:5173/swagger-ui.html`)
 
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- Raw OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+The `frontend` container waits on the `backend` container's healthcheck, which waits on
+`db`'s, so a cold `docker compose up --build` brings everything up in the right order
+with no manual waiting.
 
-Click "Authorize" in Swagger UI and paste an `accessToken` from `POST /api/auth/login`
-(no `Bearer ` prefix needed — Swagger UI adds it) to try out protected endpoints
-directly from the docs. Every operation's description explicitly notes whether it's
-public, requires any authenticated user, or requires `ADMIN`, and the checkout
-operation documents the `tok_chargeDeclined` mock decline token.
+## Dummy Data
 
-## Example requests
+`dummy-data/` contains realistic JSON fixtures for every entity (users, products,
+categories, carts, orders, inventory adjustments, payment tokens) and `seed.js`, a
+zero-dependency Node script that seeds a running backend entirely through its public
+REST API. Full instructions: [`dummy-data/README.md`](dummy-data/README.md).
 
-Assumes the app is running (locally or via Docker Compose) at `http://localhost:8080`.
-
-### Register
+Quick start (after `docker compose up --build -d`):
 
 ```bash
-curl -s -X POST http://localhost:8080/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"jane.doe@example.com","password":"SecurePass123!","fullName":"Jane Doe"}'
+cd dummy-data
+node seed.js
 ```
 
-```json
-{"id":1,"email":"jane.doe@example.com","fullName":"Jane Doe","role":"CUSTOMER","createdAt":"2026-07-21T10:15:30"}
-```
+This registers demo users, promotes one to `ADMIN` (the only step that isn't pure REST —
+there's no API endpoint that can assign that role, by design), creates a 15-product
+catalog across 5 categories, populates a few carts, replays a successful and a declined
+checkout, and applies a couple of manual stock adjustments.
 
-### Login (capture the access token)
+## API Usage
+
+- **Backend URL:** `http://localhost:8080` (direct) or `http://localhost:5173/api/*`
+  (through the frontend's proxy — same requests, same responses)
+- **Frontend URL:** `http://localhost:5173`
+- **Swagger / OpenAPI:** `http://localhost:8080/swagger-ui.html`,
+  raw spec at `http://localhost:8080/v3/api-docs`
+
+### Authentication flow
+
+1. `POST /api/auth/register` — always creates a `CUSTOMER` account (no public way to
+   self-assign `ADMIN`).
+2. `POST /api/auth/login` — returns a short-lived access token (15 min) and a long-lived
+   refresh token (7 days).
+3. The frontend stores both tokens in `localStorage` and attaches
+   `Authorization: Bearer <accessToken>` to every request via an axios interceptor.
+4. On a `401`, the same interceptor automatically calls `POST /api/auth/refresh` once,
+   retries the original request with the new access token, and queues any other requests
+   that failed concurrently so they don't each trigger their own refresh. If the refresh
+   token itself is invalid/expired, the user is logged out client-side.
+5. `POST /api/auth/logout` revokes the specific refresh token used — one session at a
+   time, not "log out everywhere."
+
+The frontend derives the logged-in user's id/email/role by decoding the access token's
+JWT payload client-side (display purposes only — every request is still verified
+server-side); `fullName` is only known right after registering in the same browser
+session, since login doesn't return it, and falls back to showing the email otherwise.
+
+### Testing instructions
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"jane.doe@example.com","password":"SecurePass123!"}' | jq -r .accessToken)
+# Backend: unit + integration tests (Mockito, MockMvc + real H2, real JWTs)
+cd backend && mvn clean test
+
+# Frontend: type-check + production build (no test suite yet -- see Development below)
+cd frontend && npm run build
 ```
 
-### Unauthenticated cart access -> 401
+Manually exercising the full stack: bring up Docker Compose, run the seed script, then
+open `http://localhost:5173` and log in as `admin@example.com` / `AdminPass123!` (admin)
+or `jane.doe@example.com` / `SecurePass123!` (customer) — see `dummy-data/users/users.json`
+for the full list.
 
-```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/cart
-# 401
-```
+## Development
 
-### Create a product as ADMIN
+### Available scripts
 
-There's no public "become admin" endpoint by design (registration always creates a
-`CUSTOMER`); seed an admin user directly (e.g. via the H2 console, or a one-off insert
-against Postgres) for local testing. Once you have an admin's `accessToken`:
+**Backend** (`backend/`): `mvn spring-boot:run`, `mvn clean test`, `mvn clean package`.
 
-```bash
-curl -s -X POST http://localhost:8080/api/products \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -d '{"sku":"SKU-WIDGET-001","name":"Deluxe Widget","description":"A widget, but deluxe.","price":29.99,"stockQuantity":100,"category":"Widgets"}'
-```
+**Frontend** (`frontend/`): `npm run dev`, `npm run build`, `npm run preview`,
+`npm run lint` (oxlint).
 
-```json
-{"id":1,"sku":"SKU-WIDGET-001","name":"Deluxe Widget","description":"A widget, but deluxe.","price":29.99,"stockQuantity":100,"category":"Widgets","active":true}
-```
+### Coding standards
 
-### The same request as a CUSTOMER -> 403
+- **Backend:** no Lombok (hand-written getters/setters — see `backend/README.md` for
+  why), explicit DTO/entity mapping, `@RestControllerAdvice`-based structured error
+  responses, soft-deletes and optimistic locking where correctness demands it.
+- **Frontend:** TypeScript strict mode, functional components + hooks only, one
+  TanStack Query hook module per backend resource, Zod schemas co-located with the forms
+  that use them, no prop-drilling past `AuthContext` (everything else is server state via
+  TanStack Query). Comments are reserved for non-obvious *why*, not restating *what*.
 
-```bash
-curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8080/api/products \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"sku":"SKU-X","name":"X","price":1.00,"stockQuantity":1}'
-# 403
-```
+### Build commands
 
-### Add to cart
+See "Running the Backend" / "Running the Frontend" / "Docker" above — those same
+commands are what CI or a deploy pipeline would run.
 
-```bash
-curl -s -X POST http://localhost:8080/api/cart/items \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"productId":1,"quantity":2}'
-```
+### Deployment notes
 
-### Checkout successfully -> stock decrements
-
-```bash
-curl -s -X POST http://localhost:8080/api/orders/checkout \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"paymentMethodToken":"tok_visa"}'
-```
-
-```json
-{"id":1,"status":"PAID","totalAmount":59.98,"items":[...],"payment":{"gateway":"MOCK","status":"SUCCEEDED", ...}}
-```
-
-`GET /api/products/1` now shows `stockQuantity: 98` (100 - 2).
-
-### Checkout with the mock decline token -> PAYMENT_FAILED, stock untouched
-
-```bash
-curl -s -X POST http://localhost:8080/api/cart/items \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"productId":1,"quantity":3}'
-
-curl -s -X POST http://localhost:8080/api/orders/checkout \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"paymentMethodToken":"tok_chargeDeclined"}'
-```
-
-```json
-{"id":2,"status":"PAYMENT_FAILED","totalAmount":89.97,"items":[...],"payment":{"gateway":"MOCK","status":"FAILED", ...}}
-```
-
-`stockQuantity` is still `98` (unchanged), and the cart still has the 3 items — retry
-with a different token to complete the purchase.
-
-### Admin cancels a paid order -> restocks
-
-```bash
-curl -s -X PATCH http://localhost:8080/api/orders/1/status \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -d '{"status":"CANCELLED"}'
-```
-
-```json
-{"id":1,"status":"CANCELLED","totalAmount":59.98, ...}
-```
-
-`stockQuantity` goes back up by the cancelled order's quantity (98 -> 100 for the
-2-unit order above), and an `ORDER_CANCELLED` `InventoryTransaction` row is written per
-line item.
-
-## Testing
-
-```bash
-mvn clean test
-```
-
-Runs the full suite: Mockito unit tests for `AuthServiceImpl` (register/login/refresh/
-logout, bad credentials, token rotation), `ProductServiceImpl` (CRUD, soft delete,
-active-vs-admin visibility, stock adjustment incl. optimistic-lock conflict),
-`CartServiceImpl` (add/update/remove/clear, quantity-merge-on-add), and — the most
-important — `OrderServiceImpl` (checkout success with stock decrement + audit row,
-insufficient-stock 409, the decline path with stock/cart left untouched, an
-optimistic-lock conflict mid-checkout, and cancel-with-restock vs. the rejected
-cancel-a-delivered-order transition); plus full-stack `@SpringBootTest` + MockMvc
-integration tests against real in-memory H2 using real JWTs obtained from the actual
-`/api/auth/login` endpoint, covering role enforcement (401 vs. 403 vs. allowed), the
-complete register -> login -> create-product(ADMIN) -> add-to-cart(customer) ->
-checkout -> verify-stock-decremented happy path, the decline path via
-`tok_chargeDeclined`, admin order cancellation with restock, and the 404-not-403 privacy
-behavior for viewing another customer's order.
+- Override `APP_JWT_SECRET` with a freshly generated secret — the committed default is
+  explicitly a local/demo placeholder.
+- The frontend's Dockerfile builds static assets and serves them via nginx, which also
+  reverse-proxies `/api/**` to the backend — deploying the two containers behind the
+  same reverse proxy (or keeping nginx's proxy_pass pointed at wherever the backend
+  actually runs) avoids ever needing CORS configuration on the backend.
+- Swagger UI and `/v3/api-docs` are enabled by default (springdoc); disable them
+  (`springdoc.api-docs.enabled=false` / `springdoc.swagger-ui.enabled=false`) for a
+  production deployment if that surface shouldn't be public.
+- To use real Stripe charges instead of the mock gateway, set `PAYMENT_GATEWAY=stripe`
+  and a real `STRIPE_API_KEY` — see `backend/README.md`'s payment gateway section.
 
 ## License
 

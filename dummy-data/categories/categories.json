@@ -1,0 +1,10 @@
+{
+  "_comment": "The backend has no separate Category entity/endpoint -- 'category' is a free-text field on Product, filterable via GET /api/products?category=. This file documents the category values used consistently across dummy-data/products/products.json, so the frontend's category filter has a stable, known set of values to demo against.",
+  "categories": [
+    { "name": "Widgets", "description": "The original example category from the backend's own README." },
+    { "name": "Electronics", "description": "Consumer electronics and accessories." },
+    { "name": "Home & Kitchen", "description": "Home goods and kitchenware." },
+    { "name": "Books", "description": "Technical and non-fiction books." },
+    { "name": "Apparel", "description": "Clothing and accessories." }
+  ]
+}

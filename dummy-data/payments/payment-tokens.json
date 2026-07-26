@@ -1,0 +1,7 @@
+{
+  "_comment": "Mock payment gateway tokens (see backend MockPaymentGateway). Any non-empty token succeeds except the literal decline token below -- these mirror Stripe's own test-mode magic tokens so the same values would carry over if payment.gateway=stripe were exercised against a real Stripe test account.",
+  "tokens": {
+    "success": ["tok_visa", "tok_mastercard", "tok_amex"],
+    "decline": "tok_chargeDeclined"
+  }
+}

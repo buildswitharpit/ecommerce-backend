@@ -1,0 +1,30 @@
+{
+  "_comment": "Sample cart contents keyed by the demo user who owns them (see dummy-data/users/users.json). Applied via repeated POST /api/cart/items {productId, quantity}. Product ids are assigned by the DB at insert time, so seed.js resolves each sku here to its actual id after creating the catalog.",
+  "carts": [
+    {
+      "owner": "jane.doe@example.com",
+      "items": [
+        { "sku": "SKU-WIDGET-001", "quantity": 2 },
+        { "sku": "SKU-ELEC-001", "quantity": 1 }
+      ]
+    },
+    {
+      "owner": "john.smith@example.com",
+      "items": [
+        { "sku": "SKU-BOOK-001", "quantity": 1 },
+        { "sku": "SKU-BOOK-002", "quantity": 1 },
+        { "sku": "SKU-HOME-004", "quantity": 2 }
+      ]
+    },
+    {
+      "owner": "priya.sharma@example.com",
+      "items": [{ "sku": "SKU-HOME-002", "quantity": 1 }],
+      "note": "Only 3 units of this product are in stock -- a good manual test for the near-empty stock warning and for racing two checkouts against it."
+    },
+    {
+      "owner": "empty.cart.user@example.com",
+      "items": [],
+      "note": "Deliberately left empty -- exercises the empty-cart UI state."
+    }
+  ]
+}

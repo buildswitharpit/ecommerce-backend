@@ -1,0 +1,43 @@
+{
+  "_comment": "Local/demo test data only. Plaintext passwords here are for seeding convenience -- the API always BCrypt-hashes them server-side and never stores or returns plaintext. Do not reuse these credentials anywhere real.",
+  "users": [
+    {
+      "email": "admin@example.com",
+      "password": "AdminPass123!",
+      "fullName": "Ava Admin",
+      "role": "ADMIN",
+      "note": "Registration always creates a CUSTOMER; seed.js promotes this account to ADMIN via a follow-up SQL UPDATE after registering it (see dummy-data/README.md)."
+    },
+    {
+      "email": "jane.doe@example.com",
+      "password": "SecurePass123!",
+      "fullName": "Jane Doe",
+      "role": "CUSTOMER"
+    },
+    {
+      "email": "john.smith@example.com",
+      "password": "SecurePass123!",
+      "fullName": "John Smith",
+      "role": "CUSTOMER"
+    },
+    {
+      "email": "priya.sharma@example.com",
+      "password": "SecurePass123!",
+      "fullName": "Priya Sharma",
+      "role": "CUSTOMER"
+    },
+    {
+      "email": "carlos.gomez@example.com",
+      "password": "SecurePass123!",
+      "fullName": "Carlos Gomez",
+      "role": "CUSTOMER"
+    },
+    {
+      "email": "empty.cart.user@example.com",
+      "password": "SecurePass123!",
+      "fullName": "Nora NoOrders",
+      "role": "CUSTOMER",
+      "note": "Edge case: a registered user who never adds anything to their cart or checks out -- useful for testing empty states."
+    }
+  ]
+}

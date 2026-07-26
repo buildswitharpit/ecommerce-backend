@@ -1,0 +1,245 @@
+Ecommerce Backend Project - Refactoring and Frontend Implementation
+
+Please perform the following changes to the existing Ecommerce Backend project while following modern development best practices, maintaining clean architecture, and ensuring the application remains fully functional.
+
+Objective
+
+Refactor the existing project into a well-structured monorepo containing separate backend and frontend applications, add Docker support, provide reusable dummy data, and create comprehensive documentation.
+
+1. Backend Project Restructuring
+
+Refactor the existing project structure by moving all backend-related source code into a dedicated backend directory at the root of the repository.
+
+Target Folder Structure
+Ecommerce-backend/
+├── backend/
+├── frontend/
+├── dummy-data/
+├── docker-compose.yml
+├── README.md
+
+Requirements
+Move all backend source code into the backend directory.
+Update all relative imports and file paths.
+Update package scripts.
+Update environment variable references.
+Update Docker configuration.
+Update build configurations.
+Update any CI/CD configuration if required.
+Ensure the backend functionality remains unchanged after the refactor.
+Ensure all existing APIs continue to work without breaking changes.
+2. Frontend Application
+
+Create a completely new frontend application inside the frontend directory.
+
+Technology Stack
+
+Use the latest stable versions of:
+
+React 19
+TypeScript
+Vite
+Shadcn UI
+Tailwind CSS
+React Router
+TanStack Query (React Query)
+Axios
+React Hook Form
+Zod
+Lucide Icons
+Sonner (for notifications)
+Any additional libraries that improve maintainability and follow current best practices.
+Architecture
+
+Follow a scalable folder structure similar to:
+
+frontend/
+├── src/
+│   ├── api/
+│   ├── components/
+│   ├── layouts/
+│   ├── pages/
+│   ├── hooks/
+│   ├── services/
+│   ├── routes/
+│   ├── types/
+│   ├── utils/
+│   ├── context/
+│   ├── assets/
+│   └── styles/
+
+
+Use modern React best practices including:
+
+Functional components
+Hooks
+Type-safe APIs
+Reusable UI components
+Feature-based organization where appropriate
+Clean separation of concerns
+UI Requirements
+
+No custom branding or elaborate theme is required.
+
+Focus on:
+
+Clean UI
+Responsive design
+Good user experience
+Accessibility
+Reusable components
+Proper loading states
+Empty states
+Error states
+Success notifications
+Functional Requirements
+
+The frontend should provide a fully functional UI for every backend service and API endpoint.
+
+For each backend endpoint:
+
+Create an appropriate page or component.
+Allow users to interact with the endpoint through the UI.
+Display API responses in a clean and user-friendly manner.
+Support all CRUD operations wherever applicable.
+Include proper form validation.
+Handle API errors gracefully.
+Display loading indicators while requests are in progress.
+
+Examples include (where applicable):
+
+Authentication
+User Management
+Product Management
+Categories
+Inventory
+Orders
+Cart
+Payments
+File Uploads
+Search
+Reports
+Any remaining backend endpoints
+
+The frontend should consume the existing backend APIs without modifying their behaviour unless absolutely necessary.
+
+3. Dockerization
+
+Dockerize the complete application.
+
+Requirements:
+
+Backend Dockerfile
+Frontend Dockerfile
+Root-level Docker Compose configuration
+Proper networking between frontend and backend
+Environment variable support
+Production-ready Docker configuration where practical
+
+Running the following command should start the complete application:
+
+docker compose up --build
+
+4. Dummy/Test Data
+
+Create a dummy-data folder containing reusable test data for end-to-end testing.
+
+Organize the data by entity, for example:
+
+dummy-data/
+├── users/
+├── products/
+├── categories/
+├── orders/
+├── inventory/
+├── carts/
+└── payments/
+
+
+The dummy data should:
+
+Be realistic
+Be well organized
+Cover common use cases
+Cover edge cases where appropriate
+Support complete end-to-end testing
+
+If seed scripts already exist, update them to use the data from this folder.
+
+5. Documentation
+
+Create a comprehensive README.md at the project root.
+
+The documentation should include:
+
+Project Overview
+Project purpose
+Folder structure
+Architecture overview
+Technology stack
+Installation
+Prerequisites
+Clone repository
+Install dependencies
+Configure environment variables
+Running the Backend
+Development mode
+Production mode
+Running the Frontend
+Development mode
+Production build
+Docker
+Build containers
+Run Docker Compose
+Stop containers
+Dummy Data
+
+Explain:
+
+Available datasets
+How to seed the database
+How to use the dummy data
+API Usage
+
+Include:
+
+Backend URL
+Frontend URL
+Authentication flow
+Testing instructions
+Development
+
+Explain:
+
+Folder structure
+Available scripts
+Coding standards
+Build commands
+Deployment notes
+6. Code Quality Expectations
+
+Throughout the implementation:
+
+Follow clean architecture principles.
+Follow SOLID principles where applicable.
+Keep the code modular and maintainable.
+Use TypeScript strict mode.
+Avoid code duplication.
+Use meaningful naming conventions.
+Write reusable components and utilities.
+Use proper error handling.
+Add comments only where they improve clarity.
+Ensure responsive layouts across desktop, tablet, and mobile devices.
+Keep the codebase easy to extend and maintain.
+7. Final Deliverables
+
+The completed project should include:
+
+Refactored backend inside the backend folder.
+Fully functional React 19 frontend inside the frontend folder.
+Responsive UI covering every backend feature and API endpoint.
+Complete Docker support with Docker Compose.
+Organized dummy/test data for end-to-end testing.
+Comprehensive project documentation.
+Updated scripts and configurations.
+A fully working application that can be started with minimal setup and where all existing backend functionality continues to work seamlessly after the refactoring.

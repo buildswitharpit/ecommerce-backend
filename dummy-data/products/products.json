@@ -1,0 +1,128 @@
+{
+  "_comment": "Realistic catalog fixtures covering common cases (varied categories, prices, stock levels) and edge cases (out-of-stock, low-stock, missing category/description). Seeded via POST /api/products as an ADMIN.",
+  "products": [
+    {
+      "sku": "SKU-WIDGET-001",
+      "name": "Deluxe Widget",
+      "description": "A widget, but deluxe. Precision-machined aluminum housing with a satin finish.",
+      "price": 29.99,
+      "stockQuantity": 150,
+      "category": "Widgets"
+    },
+    {
+      "sku": "SKU-WIDGET-002",
+      "name": "Compact Widget",
+      "description": "A smaller, budget-friendly widget for everyday use.",
+      "price": 14.99,
+      "stockQuantity": 300,
+      "category": "Widgets"
+    },
+    {
+      "sku": "SKU-ELEC-001",
+      "name": "Wireless Mechanical Keyboard",
+      "description": "Hot-swappable switches, 75% layout, USB-C and Bluetooth 5.0.",
+      "price": 89.00,
+      "stockQuantity": 45,
+      "category": "Electronics"
+    },
+    {
+      "sku": "SKU-ELEC-002",
+      "name": "Noise-Cancelling Headphones",
+      "description": "Over-ear headphones with 30-hour battery life and adaptive ANC.",
+      "price": 179.50,
+      "stockQuantity": 60,
+      "category": "Electronics"
+    },
+    {
+      "sku": "SKU-ELEC-003",
+      "name": "4K Webcam",
+      "description": "60fps 4K webcam with autofocus and a built-in privacy shutter.",
+      "price": 59.99,
+      "stockQuantity": 0,
+      "category": "Electronics",
+      "edgeCase": "out of stock -- exercises 'Out of stock' UI state and blocks add-to-cart"
+    },
+    {
+      "sku": "SKU-HOME-001",
+      "name": "Ceramic Pour-Over Coffee Dripper",
+      "description": "Hand-glazed ceramic dripper for a clean, paper-filtered cup.",
+      "price": 24.00,
+      "stockQuantity": 80,
+      "category": "Home & Kitchen"
+    },
+    {
+      "sku": "SKU-HOME-002",
+      "name": "Cast Iron Skillet, 12-inch",
+      "description": "Pre-seasoned cast iron skillet, oven-safe to 500F.",
+      "price": 39.99,
+      "stockQuantity": 3,
+      "category": "Home & Kitchen",
+      "edgeCase": "low stock -- exercises a near-zero stock warning state"
+    },
+    {
+      "sku": "SKU-HOME-003",
+      "name": "Linen Throw Blanket",
+      "description": "Pre-washed 100% linen throw, machine washable.",
+      "price": 45.00,
+      "stockQuantity": 120,
+      "category": "Home & Kitchen"
+    },
+    {
+      "sku": "SKU-BOOK-001",
+      "name": "Effective Systems Design",
+      "description": "A practical guide to designing large-scale backend systems.",
+      "price": 34.99,
+      "stockQuantity": 200,
+      "category": "Books"
+    },
+    {
+      "sku": "SKU-BOOK-002",
+      "name": "The Pragmatic API",
+      "description": "Patterns and anti-patterns for REST API design.",
+      "price": 27.50,
+      "stockQuantity": 175,
+      "category": "Books"
+    },
+    {
+      "sku": "SKU-APP-001",
+      "name": "Classic Crewneck T-Shirt",
+      "description": "100% combed cotton, available in unisex sizing.",
+      "price": 19.99,
+      "stockQuantity": 500,
+      "category": "Apparel"
+    },
+    {
+      "sku": "SKU-APP-002",
+      "name": "Everyday Canvas Tote Bag",
+      "description": "12oz heavyweight canvas, reinforced stitching.",
+      "price": 16.00,
+      "stockQuantity": 250,
+      "category": "Apparel"
+    },
+    {
+      "sku": "SKU-MISC-001",
+      "name": "Mystery Grab Bag",
+      "description": null,
+      "price": 9.99,
+      "stockQuantity": 40,
+      "category": null,
+      "edgeCase": "no description and no category -- exercises the fallback/placeholder UI copy"
+    },
+    {
+      "sku": "SKU-ELEC-004",
+      "name": "Portable Power Bank 20,000mAh",
+      "description": "USB-C PD 65W fast charging power bank with digital display.",
+      "price": 49.99,
+      "stockQuantity": 90,
+      "category": "Electronics"
+    },
+    {
+      "sku": "SKU-HOME-004",
+      "name": "Stainless Steel Water Bottle, 32oz",
+      "description": "Double-wall vacuum insulated, keeps drinks cold for 24 hours.",
+      "price": 22.00,
+      "stockQuantity": 140,
+      "category": "Home & Kitchen"
+    }
+  ]
+}

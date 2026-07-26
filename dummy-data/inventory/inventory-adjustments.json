@@ -1,0 +1,23 @@
+{
+  "_comment": "Sample admin-only manual stock adjustments (PATCH /api/products/{id}/stock). Each writes one InventoryTransaction audit row. Applied by seed.js after the catalog and an admin session exist.",
+  "adjustments": [
+    {
+      "sku": "SKU-HOME-002",
+      "quantityChange": 25,
+      "reason": "RESTOCK",
+      "note": "Restocking the low-stock cast iron skillet from 3 up to 28 units."
+    },
+    {
+      "sku": "SKU-ELEC-003",
+      "quantityChange": 20,
+      "reason": "RESTOCK",
+      "note": "Bringing the out-of-stock 4K webcam back into stock."
+    },
+    {
+      "sku": "SKU-WIDGET-002",
+      "quantityChange": -10,
+      "reason": "ORDER_PLACED",
+      "note": "Simulates a manual correction after an offline/in-store sale not tracked by this API."
+    }
+  ]
+}

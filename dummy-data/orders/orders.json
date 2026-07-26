@@ -1,0 +1,17 @@
+{
+  "_comment": "Orders can only be created through POST /api/orders/checkout (there is no direct order-insert endpoint), so this file describes checkout scenarios rather than raw order rows. seed.js replays each scenario against the matching user's cart from dummy-data/carts/carts.json.",
+  "scenarios": [
+    {
+      "owner": "jane.doe@example.com",
+      "paymentMethodToken": "tok_visa",
+      "expectedStatus": "PAID",
+      "note": "Happy path: cart has 2x Deluxe Widget + 1x Wireless Mechanical Keyboard, charge succeeds, stock decrements, cart clears."
+    },
+    {
+      "owner": "john.smith@example.com",
+      "paymentMethodToken": "tok_chargeDeclined",
+      "expectedStatus": "PAYMENT_FAILED",
+      "note": "Decline path: order is created but marked PAYMENT_FAILED, stock is left untouched, and the cart survives so the customer can retry with a different token."
+    }
+  ]
+}
